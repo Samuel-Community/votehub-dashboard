@@ -49,7 +49,7 @@ export async function ensureAllowedDiscordUser(discordUser) {
   if (!allowedFromEnv && !existing) return null;
   const role = allowedFromEnv ? 'owner' : existing.role;
   const user = existing
-    ? await models.AdminUser.findByIdAndUpdate(existing._id, { username: discordUser.username, avatarUrl: discordUser.avatarUrl, role, lastLoginAt: new Date() }, { new: true })
+    ? await models.AdminUser.findByIdAndUpdate(existing._id, { username: discordUser.username, avatarUrl: discordUser.avatarUrl, role, lastLoginAt: new Date() }, { returnDocument: 'after' })
     : await models.AdminUser.create({ discordId: discordUser.id, username: discordUser.username, avatarUrl: discordUser.avatarUrl, role, lastLoginAt: new Date() });
   return user;
 }
