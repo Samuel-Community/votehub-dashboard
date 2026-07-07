@@ -121,7 +121,7 @@ export async function apiRoutes(app) {
     const update = { ...body };
     if (body.name && !body.slug) update.slug = slugify(body.name);
     if (body.botToken) update.encryptedBotToken = encrypt(body.botToken), delete update.botToken;
-    const bot = await models.ManagedBot.findByIdAndUpdate(request.params.id, update, { new: true });
+    const bot = await models.ManagedBot.findByIdAndUpdate(request.params.id, update, { returnDocument: 'after' });
     if (!bot) return reply.code(404).send({ error: true, message: 'Bot not found.' });
     await audit(request, 'Bot updated', 'bot', bot, null, { name: bot.name, status: bot.status });
     return botDto(bot);
@@ -147,7 +147,7 @@ export async function apiRoutes(app) {
       bot.tokenHealth = 'Valid token';
       bot.lastValidatedAt = new Date();
       await bot.save?.();
-      if (!bot.save) await models.ManagedBot.findByIdAndUpdate(bot._id, bot, { new: true });
+      if (!bot.save) await models.ManagedBot.findByIdAndUpdate(bot._id, bot, { returnDocument: 'after' });
       await audit(request, 'Token validated', 'bot', bot);
       return botDto(bot);
     } catch (error) {
@@ -178,7 +178,7 @@ export async function apiRoutes(app) {
   app.patch('/api/integrations/:id', async (request, reply) => {
     const body = request.body || {};
     if (body.name && !body.slug) body.slug = slugify(body.name);
-    const integration = await models.VoteListIntegration.findByIdAndUpdate(request.params.id, body, { new: true });
+    const integration = await models.VoteListIntegration.findByIdAndUpdate(request.params.id, body, { returnDocument: 'after' });
     if (!integration) return reply.code(404).send({ error: true, message: 'Integration not found.' });
     const bot = await models.ManagedBot.findById(integration.managedBot);
     await audit(request, 'Integration updated', 'integration', integration, null, { name: integration.name });
@@ -304,7 +304,7 @@ export async function apiRoutes(app) {
       body.encryptedDiscordWebhookToken = encrypt(parsed.token);
       delete body.webhookUrl;
     }
-    const target = await models.NotificationTarget.findByIdAndUpdate(request.params.id, body, { new: true });
+    const target = await models.NotificationTarget.findByIdAndUpdate(request.params.id, body, { returnDocument: 'after' });
     if (!target) return reply.code(404).send({ error: true, message: 'Webhook not found.' });
     const bot = await models.ManagedBot.findById(target.managedBot);
     await audit(request, 'Webhook updated', 'webhook', target, null, { name: target.name });
