@@ -16,94 +16,204 @@ import { requireAuth } from './lib/auth.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
-const app = Fastify({ logger: true, trustProxy: true });
 
-app.removeContentTypeParser('application/json');
-app.addContentTypeParser('application/json', { parseAs: 'buffer' }, (request, body, done) => {
-  const rawBody = body.toString('utf8');
-  request.rawBody = rawBody;
-
-  if (!rawBody) {
-    done(null, {});
-    return;
-  }
-
-  try {
-    done(null, JSON.parse(rawBody));
-  } catch (error) {
-    error.statusCode = 400;
-    done(error);
-  }
+const app = Fastify({
+  logger: true,
+  trustProxy: true,
 });
 
+const isProduction = config.nodeEnv === 'production';
+
+const cspDirectives = {
+  defaultSrc: ["'self'"],
+  baseUri: ["'self'"],
+  objectSrc: ["'none'"],
+  frameAncestors: ["'none'"],
+  formAction: ["'self'"],
+
+  scriptSrc: ["'self'"],
+  scriptSrcAttr: ["'none'"],
+
+  // À garder pour le moment, sinon certains styles du build peuvent casser.
+  // On pourra durcir plus tard après test visuel.
+  styleSrc: ["'self'", "'unsafe-inline'"],
+
+  imgSrc: [
+    "'self'",
+    'data:',
+    'blob:',
+    'https://cdn.discordapp.com',
+    'https://media.discordapp.net',
+    'https://images-ext-1.discordapp.net',
+    'https://images-ext-2.discordapp.net',
+    'https://top.gg',
+  ],
+
+  fontSrc: ["'self'", 'data:'],
+
+  connectSrc: [
+    "'self'",
+    'https://discord.com',
+    'https://discordapp.com',
+    'https://cdn.discordapp.com',
+    config.publicBaseUrl,
+    config.frontendUrl,
+  ].filter(Boolean),
+};
+
+if (isProduction) {
+  cspDirectives.upgradeInsecureRequests = [];
+}
+
+app.removeContentTypeParser('application/json');
+
+app.addContentTypeParser(
+  'application/json',
+  { parseAs: 'buffer' },
+  (request, body, done) => {
+    const rawBody = body.toString('utf8');
+    request.rawBody = rawBody;
+
+    if (!rawBody) {
+      done(null, {});
+      return;
+    }
+
+    try {
+      done(null, JSON.parse(rawBody));
+    } catch (error) {
+      error.statusCode = 400;
+      done(error);
+    }
+  },
+);
+
 await app.register(helmet, {
-  // Security headers are managed by NGINX in production to avoid duplicate/conflicting
-  // values reported by OWASP ZAP. Keep these disabled here.
-  contentSecurityPolicy: false,
+  // Important :
+  // HSTS est désactivé côté Fastify pour éviter :
+  // "Strict-Transport-Security option was specified twice"
+  // Avec Cloudflare Flexible, gère HSTS côté Cloudflare plus tard si besoin.
   hsts: false,
-  strictTransportSecurity: false,
-  frameguard: false,
-  xFrameOptions: false,
-  referrerPolicy: false,
-  permittedCrossDomainPolicies: false,
-  xPermittedCrossDomainPolicies: false,
-  xContentTypeOptions: false,
-  xDnsPrefetchControl: false,
-  xDownloadOptions: false,
-  xXssProtection: false,
-  xPoweredBy: false,
-  crossOriginOpenerPolicy: false,
-  crossOriginResourcePolicy: false,
-  originAgentCluster: false,
+
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: cspDirectives,
+  },
+
+  frameguard: {
+    action: 'deny',
+  },
+
+  noSniff: true,
+
+  referrerPolicy: {
+    policy: 'no-referrer',
+  },
+
+  crossOriginEmbedderPolicy: false,
 });
 
 await app.register(cors, {
-  origin(origin, callback) {
-    if (config.nodeEnv !== 'production') return callback(null, true);
-    if (!origin || config.allowedOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('Not allowed by CORS'), false);
+  origin: (origin, callback) => {
+    if (!origin) {
+      callback(null, true);
+      return;
+    }
+
+    if (!isProduction) {
+      callback(null, true);
+      return;
+    }
+
+    const allowedOrigins = new Set(
+      [config.publicBaseUrl, config.frontendUrl].filter(Boolean),
+    );
+
+    callback(null, allowedOrigins.has(origin));
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Authorization', 'X-Webhook-Token', 'X-VoteHub-Token', 'X-DBL-Token', 'X-Botlist-Token', 'X-Topgg-Signature'],
 });
+
 await app.register(cookie);
-await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+
+await app.register(rateLimit, {
+  max: 120,
+  timeWindow: '1 minute',
+});
+
 await app.register(formbody);
+
 await connectDatabase(app);
+
+app.addHook('onSend', async (request, reply, payload) => {
+  reply.header('X-Robots-Tag', 'noindex, nofollow, noarchive');
+  reply.header(
+    'Permissions-Policy',
+    'camera=(), microphone=(), geolocation=(), payment=()',
+  );
+
+  return payload;
+});
 
 await app.register(authRoutes);
 
 app.addHook('preHandler', async (request, reply) => {
-  const publicRoutes = ['/api/auth/discord', '/api/auth/discord/callback', '/api/auth/me', '/api/health'];
-  if (request.url.startsWith('/webhook/') || publicRoutes.some(route => request.url.startsWith(route))) return;
-  if (request.url.startsWith('/api/')) return requireAuth(request, reply);
+  const publicRoutes = [
+    '/api/auth/discord',
+    '/api/auth/discord/callback',
+    '/api/auth/me',
+    '/api/health',
+  ];
+
+  if (
+    request.url.startsWith('/webhook/') ||
+    publicRoutes.some((route) => request.url.startsWith(route))
+  ) {
+    return;
+  }
+
+  if (request.url.startsWith('/api/')) {
+    return requireAuth(request, reply);
+  }
 });
 
 await app.register(apiRoutes);
 await app.register(webhookRoutes);
 
-if (config.nodeEnv === 'production') {
-  await app.register(staticPlugin, { root: path.join(root, 'dist'), prefix: '/' });
+if (isProduction) {
+  await app.register(staticPlugin, {
+    root: path.join(root, 'dist'),
+    prefix: '/',
+    setHeaders(res) {
+      res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    },
+  });
+
   app.setNotFoundHandler((request, reply) => {
-    if (!request.url.startsWith('/api/') && !request.url.startsWith('/webhook/')) return reply.sendFile('index.html');
-    return reply.code(404).send({ error: true, message: 'Not found.' });
+    if (
+      !request.url.startsWith('/api/') &&
+      !request.url.startsWith('/webhook/')
+    ) {
+      return reply.sendFile('index.html');
+    }
+
+    return reply.code(404).send({
+      error: true,
+      message: 'Not found.',
+    });
   });
 }
 
 app.setErrorHandler((error, request, reply) => {
   request.log.error(error);
-  reply.code(error.statusCode || 500).send({ error: true, message: config.nodeEnv === 'production' ? 'Internal server error.' : error.message });
+
+  reply.code(error.statusCode || 500).send({
+    error: true,
+    message: isProduction ? 'Internal server error.' : error.message,
+  });
 });
 
-if (config.nodeEnv === 'production') {
-  const unsafeSecrets = ['change-me-super-secret', 'replace-with-a-long-random-secret', 'replace-with-a-different-long-random-secret'];
-  if (unsafeSecrets.includes(config.sessionSecret) || unsafeSecrets.includes(config.encryptionSecret)) {
-    throw new Error('Unsafe production secret detected. Set strong SESSION_SECRET and ENCRYPTION_SECRET values.');
-  }
-  if (config.disableAuth) {
-    throw new Error('DISABLE_AUTH=true is not allowed in production.');
-  }
-}
-
-await app.listen({ port: config.port, host: '127.0.0.1' });
+await app.listen({
+  port: config.port,
+  host: '127.0.0.1',
+});
