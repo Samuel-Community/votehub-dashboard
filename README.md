@@ -1,195 +1,394 @@
 # VoteHub Dashboard
 
-Dashboard Fastify + React pour gérer les webhooks de votes de plusieurs bots Discord sans modifier `config.js` et sans reboot.
+VoteHub is a secure dashboard for managing Discord bot vote webhooks and vote-related automation.
 
-## Ce qui est connecté
+It is designed to handle vote events from bot listing platforms, protect private dashboard access with Discord authentication, and provide a clean interface for monitoring vote activity.
 
-- Backend **Fastify**, pas Express.
-- Connexion Discord OAuth2 pour sécuriser le dashboard.
-- Allowlist admin via `OWNER_DISCORD_IDS`.
-- MongoDB avec Mongoose pour stocker les bots, intégrations, webhooks, logs et audit logs.
-- Tokens bot et tokens webhook Discord chiffrés avec AES-256-GCM.
-- Ajout d'un bot avec token : VoteHub appelle Discord et récupère automatiquement le nom, l'ID et l'avatar du bot.
-- Routes webhook dynamiques :
-  - `POST /webhook/:botSlug/:integrationSlug`
-  - compatibilité legacy : `POST /webhook/:path`
-- Logs des votes et logs d'audit.
-- UI React connectée aux vraies routes API.
+## Features
+
+- Discord OAuth authentication
+- Private dashboard access
+- Vote webhook handling
+- Protected API routes
+- Secure session-based login
+- CORS origin allowlist
+- Production security checks
+- Fastify backend
+- React + Vite frontend
+- Static production build support
+- Cloudflare-compatible deployment
+- Security-focused NGINX configuration
+- Custom logo, favicon, and web app manifest
+
+## Tech Stack
+
+### Frontend
+
+- React
+- Vite
+- Tailwind CSS
+
+### Backend
+
+- Node.js
+- Fastify
+- Fastify Cookie
+- Fastify Session
+- Discord OAuth
+
+### Deployment
+
+- NGINX
+- PM2
+- Cloudflare
+- Linux VPS
+
+## Project Structure
+
+```txt
+votehub/
+├── public/
+│   ├── favicon.ico
+│   ├── favicon.svg
+│   ├── apple-touch-icon.png
+│   ├── web-app-manifest-192x192.png
+│   ├── web-app-manifest-512x512.png
+│   ├── site.webmanifest
+│   └── votehub-logo.png
+├── src/
+│   └── ...
+├── server/
+│   └── index.js
+├── docs/
+│   └── nginx/
+│       ├── vote.tutorapide.xyz.cloudflare-flexible.conf
+│       └── vote.tutorapide.xyz.full-strict.conf
+├── index.html
+├── package.json
+├── .env.example
+├── LICENSE
+└── README.md
+```
+
+## Security Notice
+
+Before publishing this repository, make sure that no secrets are committed.
+
+Never commit:
+
+```txt
+.env
+.env.local
+.env.production
+Discord bot token
+Discord client secret
+Session secret
+Encryption secret
+Webhook secret
+Database credentials
+Cloudflare API tokens
+Production logs
+```
+
+Recommended `.gitignore`:
+
+```gitignore
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.DS_Store
+*.zip
+```
+
+## Environment Variables
+
+Create a `.env` file from `.env.example`.
+
+```env
+NODE_ENV=production
+
+# Server
+PORT=3000
+PUBLIC_URL=https://vote.example.com
+
+# Discord OAuth
+DISCORD_CLIENT_ID=your_discord_client_id
+DISCORD_CLIENT_SECRET=your_discord_client_secret
+DISCORD_REDIRECT_URI=https://vote.example.com/api/auth/callback
+
+# Security
+SESSION_SECRET=replace_with_a_long_random_secret
+ENCRYPTION_SECRET=replace_with_a_long_random_secret
+
+# CORS
+ALLOWED_ORIGINS=https://vote.example.com
+
+# Optional
+DISABLE_AUTH=false
+```
+
+Generate secure secrets with:
+
+```bash
+openssl rand -hex 32
+```
 
 ## Installation
 
 ```bash
+git clone https://github.com/your-username/votehub.git
+cd votehub
 npm install
-cp .env.example .env
+```
+
+## Development
+
+```bash
 npm run dev
 ```
 
-Frontend : `http://localhost:5173`
-API Fastify : `http://localhost:4000`
+Depending on your configuration, the frontend and backend may run on different ports.
 
-## Configuration Discord OAuth
-
-Dans le Developer Portal Discord, crée ou utilise une application OAuth2.
-
-Redirect URL en développement :
+Example:
 
 ```txt
-http://localhost:4000/api/auth/discord/callback
+Frontend: http://localhost:5173
+Backend:  http://localhost:3000
 ```
 
-Ajoute dans `.env` :
-
-```env
-DISCORD_CLIENT_ID=...
-DISCORD_CLIENT_SECRET=...
-DISCORD_REDIRECT_URI=http://localhost:4000/api/auth/discord/callback
-OWNER_DISCORD_IDS=ton_id_discord
-```
-
-## Ajouter un bot
-
-Dans le dashboard : `Bots` → `Add Bot`.
-
-Tu peux entrer :
-
-- Bot ID / Client ID
-- Bot token
-- nom optionnel
-- avatar optionnel
-
-Le backend valide le token avec Discord via `/users/@me`. Si le token est valide, le nom et l'avatar sont récupérés automatiquement.
-
-> Important : Discord ne fournit pas un endpoint public simple pour lister tous les bots de ton Developer Portal. Le plus fiable est d'ajouter chaque bot une fois avec son token. Ensuite VoteHub peut le gérer sans reboot.
-
-## Créer une intégration de vote
-
-`Vote Integrations` → `Add Integration`.
-
-Exemple Top.gg :
-
-- Vote list name : `Top.gg`
-- Slug : `topgg`
-- Payload user field : `user`
-- Authorization token : vide pour générer un token automatiquement, ou celui donné par la bot list.
-
-URL finale :
-
-```txt
-https://ton-domaine.fr/webhook/slug-du-bot/topgg
-```
-
-Le header attendu est :
-
-```txt
-Authorization: TON_TOKEN_INTEGRATION
-```
-
-## Créer le webhook Discord de notification
-
-`Notification Webhooks` → `Add Notification Webhook`.
-
-Colle l'URL webhook Discord complète. Le backend extrait automatiquement l'ID et le token, puis chiffre le token en base.
-
-## Migration depuis l'ancien projet
-
-Place ton ancien `config.js` à la racine ou indique son chemin :
-
-```bash
-LEGACY_CONFIG_PATH=../Webhook-UpVotes/config.js npm run migrate:legacy
-```
-
-La migration crée :
-
-- 1 ManagedBot
-- les VoteListIntegrations
-- 1 NotificationTarget
-
-## Production
+## Production Build
 
 ```bash
 npm run build
-pm2 start ecosystem.config.js
 ```
 
-En production, Fastify sert le build React depuis `dist/`.
+Start the production server:
 
-## Variables importantes
+```bash
+npm start
+```
 
-Voir `.env.example`.
+Or use PM2:
 
-## Top.gg v1 webhooks with `whs_` secrets
+```bash
+pm2 start server/index.js --name votehub-dashboard
+pm2 save
+```
 
-Top.gg's new webhook system generates a webhook secret prefixed with `whs_` and signs each request with `x-topgg-signature`.
-VoteHub now supports both:
+Restart after updates:
 
-- Top.gg v1 signature verification with `x-topgg-signature`
-- legacy bot-list webhooks using the `Authorization` header
+```bash
+pm2 restart votehub-dashboard
+```
 
-### How to configure Top.gg locally with ngrok
+## NGINX Deployment
 
-1. Start VoteHub:
+The project includes production-ready NGINX examples in:
+
+```txt
+docs/nginx/
+```
+
+### Cloudflare Flexible SSL
+
+Use this configuration only if Cloudflare SSL/TLS mode is set to **Flexible**:
+
+```txt
+docs/nginx/vote.tutorapide.xyz.cloudflare-flexible.conf
+```
+
+In Flexible mode:
+
+```txt
+Browser -> Cloudflare = HTTPS
+Cloudflare -> VPS = HTTP
+```
+
+Because of this, HSTS should remain disabled.
+
+Install example:
+
+```bash
+sudo cp docs/nginx/vote.tutorapide.xyz.cloudflare-flexible.conf /etc/nginx/sites-available/votehub
+sudo ln -s /etc/nginx/sites-available/votehub /etc/nginx/sites-enabled/votehub
+sudo nginx -t
+sudo systemctl reload nginx
+```
+
+### Cloudflare Full Strict
+
+For a stronger production setup, switch Cloudflare SSL/TLS mode to **Full (strict)** and install a valid origin certificate on the VPS.
+
+Then use:
+
+```txt
+docs/nginx/vote.tutorapide.xyz.full-strict.conf
+```
+
+In Full Strict mode:
+
+```txt
+Browser -> Cloudflare = HTTPS
+Cloudflare -> VPS = HTTPS
+```
+
+This mode allows HSTS to be safely enabled.
+
+## Security Headers
+
+Security headers should be managed in one place only.
+
+Recommended setup:
+
+```txt
+NGINX = security headers
+Node/Fastify = application logic
+Cloudflare = proxy, DNS, and cache
+```
+
+The NGINX configuration includes:
+
+```txt
+Content-Security-Policy
+X-Content-Type-Options
+X-Frame-Options
+Referrer-Policy
+Permissions-Policy
+Cross-Origin-Opener-Policy
+Cross-Origin-Resource-Policy
+Origin-Agent-Cluster
+```
+
+HSTS is enabled only in the Full Strict NGINX configuration.
+
+## OWASP ZAP Scan
+
+VoteHub was tested with OWASP ZAP after the security changes.
+
+Latest result:
+
+```txt
+High:   0
+Medium: 0
+Low:    1
+Info:   1
+```
+
+The remaining low alert was related to HSTS not being enabled while Cloudflare was still configured in Flexible SSL mode.
+
+This is expected. It should only be fixed after switching Cloudflare to Full Strict.
+
+## Public Repository Checklist
+
+Before making the repository public:
+
+- [ ] Remove all real `.env` files
+- [ ] Keep only `.env.example`
+- [ ] Check `.gitignore`
+- [ ] Remove tokens from code and comments
+- [ ] Remove private Discord server IDs if needed
+- [ ] Remove production logs
+- [ ] Remove old ZIP files
+- [ ] Run `npm audit`
+- [ ] Run a fresh OWASP ZAP scan after deployment
+- [ ] Verify that `DISABLE_AUTH=false` in production
+- [ ] Verify that `SESSION_SECRET` and `ENCRYPTION_SECRET` are strong
+- [ ] Verify that CORS only allows trusted domains
+
+## Useful Commands
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Run development server:
 
 ```bash
 npm run dev
 ```
 
-2. Expose the Fastify API:
+Build the project:
 
 ```bash
-ngrok http 4000
+npm run build
 ```
 
-3. Put the ngrok URL in `.env`:
+Start production:
 
-```env
-PUBLIC_BASE_URL=https://your-ngrok-domain.ngrok-free.app
-FRONTEND_URL=http://localhost:5173
+```bash
+npm start
 ```
 
-4. Restart VoteHub.
+Restart with PM2:
 
-5. In VoteHub, create a Vote Integration:
+```bash
+pm2 restart votehub-dashboard
+```
+
+Check NGINX configuration:
+
+```bash
+sudo nginx -t
+```
+
+Reload NGINX:
+
+```bash
+sudo systemctl reload nginx
+```
+
+Check HTTP headers:
+
+```bash
+curl -I https://vote.example.com
+```
+
+Run dependency audit:
+
+```bash
+npm audit
+```
+
+## Recommended GitHub Description
 
 ```txt
-Vote list name: Top.gg
-Slug: topgg
-Webhook secret / token: whs_xxxxxxxxxxxxx
-Payload user field: data.user.platform_id
-Upvote URL: https://top.gg/bot/YOUR_BOT_ID/vote
+Secure dashboard for Discord bot vote webhooks, built with React, Vite, Fastify, NGINX, and Cloudflare-ready deployment.
 ```
 
-6. In Top.gg, paste the final webhook URL shown in VoteHub:
+## Recommended GitHub Topics
 
 ```txt
-https://your-ngrok-domain.ngrok-free.app/webhook/YOUR_BOT_SLUG/topgg
+discord
+discord-bot
+dashboard
+webhook
+vote-webhook
+fastify
+react
+vite
+cloudflare
+nginx
+security
+owasp-zap
 ```
 
-VoteHub stores the `whs_` secret in the integration token field and automatically verifies the Top.gg v1 signature.
+## License
 
-## Multi bot-list webhook compatibility
+This project is licensed under the MIT License.
 
-This version supports:
+See the `LICENSE` file for details.
 
-- Top.gg v1 webhooks with `x-topgg-signature` and `whs_...` secret.
-- Legacy webhook systems that send a token in `Authorization`.
-- Common legacy token variants: `Bearer TOKEN`, `Token TOKEN`, `Bot TOKEN`, `x-webhook-token`, `x-votehub-token`, `x-dbl-token`, `x-botlist-token`.
-- Common voter ID payload paths: `user`, `user.id`, `user_id`, `userId`, `discordUserId`, `voter`, `voter.id`, `member.user.id`, and Top.gg v1 `data.user.platform_id`.
+## Disclaimer
 
-For legacy bot lists, set the integration `Webhook secret / token` to the secret/token configured on the bot-list website. Set `Payload user field` to the path used by the provider. If unsure, try `user` first, then check Vote Logs > raw payload.
+This project is provided as-is.
 
-For Top.gg v1, use:
+Security depends on your final deployment, environment variables, Discord application configuration, Cloudflare settings, and NGINX configuration.
 
-- Secret/token: `whs_...`
-- Payload user field: `data.user.platform_id`
-
-
-## Production sécurité / NGINX
-
-Le projet contient maintenant deux configs NGINX prêtes à utiliser :
-
-- `docs/nginx/vote.tutorapide.xyz.cloudflare-flexible.conf` : à utiliser tant que Cloudflare est en SSL Flexible.
-- `docs/nginx/vote.tutorapide.xyz.full-strict.conf` : à utiliser après passage Cloudflare en Full strict avec certificat sur le VPS.
-
-Important : avec Cloudflare Flexible, ne pas activer HSTS côté VPS.
-
-Voir aussi `SECURITY_DEPLOYMENT.md`.
+Always test your production deployment before exposing it publicly.
