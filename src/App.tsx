@@ -13,6 +13,7 @@ type AuditLogRecord = { id: string; adminUsername?: string; action: string; targ
 type DashboardData = { bots: BotRecord[]; integrations: IntegrationRecord[]; webhooks: WebhookRecord[]; voteLogs: VoteLogRecord[]; auditLogs: AuditLogRecord[]; settings: { publicBaseUrl: string; authDisabled: boolean } };
 
 type Modal = null | 'bot' | 'integration' | 'edit-integration' | 'webhook' | 'payload' | 'delete';
+type ToastState = { id: number; message: string; tone: 'success' | 'error' } | null;
 
 const nav = [
   ['overview', Home, 'Overview'], ['bots', Bot, 'Bots'], ['integrations', Webhook, 'Vote Integrations'], ['webhooks', Bell, 'Notification Webhooks'], ['vote-logs', Activity, 'Vote Logs'], ['audit-logs', History, 'Audit Logs'], ['settings', Settings, 'Settings'],
@@ -56,6 +57,13 @@ export default function App() {
   const [selectedIntegration, setSelectedIntegration] = useState<IntegrationRecord | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ type: 'bot' | 'integration' | 'webhook'; id: string; name: string } | null>(null);
   const [search, setSearch] = useState('');
+  const [toast, setToast] = useState<ToastState>(null);
+
+  const notify = (message: string, tone: 'success' | 'error' = 'success') => {
+    const id = Date.now();
+    setToast({ id, message, tone });
+    window.setTimeout(() => setToast(current => current?.id === id ? null : current), 4500);
+  };
 
   const load = async () => {
     setError('');
@@ -116,20 +124,27 @@ export default function App() {
         {error && <div className="mb-4 rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-red-200">{error}</div>}
         {page === 'overview' && <Overview stats={stats} data={data} setPage={setPage} />}
         {page === 'bots' && <Bots data={data} openAdd={() => setModal('bot')} onDelete={(id, name) => { setDeleteTarget({ type: 'bot', id, name }); setModal('delete'); }} onValidate={async id => { await api(`/api/bots/${id}/validate`, { method: 'POST' }); await load(); }} />}
-        {page === 'integrations' && <Integrations data={data} openAdd={() => setModal('integration')} onEdit={(integration: IntegrationRecord) => { setSelectedIntegration(integration); setModal('edit-integration'); }} onDelete={(id, name) => { setDeleteTarget({ type: 'integration', id, name }); setModal('delete'); }} onTest={async id => { const result = await api(`/api/integrations/${id}/test`, { method: 'POST' }); alert(`Test webhook: HTTP ${result.statusCode}`); await load(); }} />}
-        {page === 'webhooks' && <Webhooks data={data} openAdd={() => setModal('webhook')} onDelete={(id, name) => { setDeleteTarget({ type: 'webhook', id, name }); setModal('delete'); }} onTest={async id => { await api(`/api/notification-targets/${id}/test`, { method: 'POST' }); alert('Test envoyé dans Discord.'); }} />}
+        {page === 'integrations' && <Integrations data={data} openAdd={() => setModal('integration')} onEdit={(integration: IntegrationRecord) => { setSelectedIntegration(integration); setModal('edit-integration'); }} onDelete={(id, name) => { setDeleteTarget({ type: 'integration', id, name }); setModal('delete'); }} onTest={async id => { try { const result = await api<{ statusCode: number; payload?: { message?: string } }>(`/api/integrations/${id}/test`, { method: 'POST' }); if (result.statusCode >= 400) throw new Error(result.payload?.message || `Webhook test failed with HTTP ${result.statusCode}.`); notify(`Integration test sent successfully (HTTP ${result.statusCode}).`); await load(); } catch (error: any) { notify(error.message || 'Unable to test this integration.', 'error'); } }} />}
+        {page === 'webhooks' && <Webhooks data={data} openAdd={() => setModal('webhook')} onDelete={(id, name) => { setDeleteTarget({ type: 'webhook', id, name }); setModal('delete'); }} onTest={async id => { try { await api(`/api/notification-targets/${id}/test`, { method: 'POST' }); notify('Test notification sent successfully to Discord.'); } catch (error: any) { notify(error.message || 'Unable to send the test notification.', 'error'); } }} />}
         {page === 'vote-logs' && <VoteLogs data={data} viewPayload={(p) => { setSelectedPayload(p); setModal('payload'); }} />}
         {page === 'audit-logs' && <AuditLogs data={data} />}
         {page === 'settings' && <SettingsPage data={data} />}
       </section>
     </main>
     {modal === 'bot' && <AddBotModal close={() => setModal(null)} done={load} />}
-    {modal === 'integration' && <AddIntegrationModal bots={data.bots} webhooks={data.webhooks} settings={data.settings} close={() => setModal(null)} done={load} />}
+    {modal === 'integration' && <AddIntegrationModal bots={data.bots} webhooks={data.webhooks} settings={data.settings} close={() => setModal(null)} done={load} notify={notify} />}
     {modal === 'edit-integration' && selectedIntegration && <EditIntegrationModal integration={selectedIntegration} webhooks={data.webhooks} settings={data.settings} close={() => { setModal(null); setSelectedIntegration(null); }} done={load} />}
     {modal === 'webhook' && <AddWebhookModal bots={data.bots} close={() => setModal(null)} done={load} />}
     {modal === 'payload' && <PayloadModal payload={selectedPayload} close={() => setModal(null)} />}
     {modal === 'delete' && deleteTarget && <DeleteModal target={deleteTarget} close={() => setModal(null)} done={async () => { const url = deleteTarget.type === 'bot' ? `/api/bots/${deleteTarget.id}` : deleteTarget.type === 'integration' ? `/api/integrations/${deleteTarget.id}` : `/api/notification-targets/${deleteTarget.id}`; await api(url, { method: 'DELETE' }); setModal(null); await load(); }} />}
+    {toast && <Toast toast={toast} close={() => setToast(null)} />}
   </div>;
+}
+
+function Toast({ toast, close }: { toast: NonNullable<ToastState>; close: () => void }) {
+  const success = toast.tone === 'success';
+  const Icon = success ? CheckCircle2 : AlertTriangle;
+  return <div role="status" aria-live="polite" className={cn('fixed bottom-5 right-5 z-[70] flex w-[calc(100%-2.5rem)] max-w-md items-start gap-3 rounded-2xl border p-4 shadow-2xl backdrop-blur sm:w-full', success ? 'border-emerald-400/30 bg-emerald-950/95 text-emerald-100' : 'border-red-400/30 bg-red-950/95 text-red-100')}><Icon className={cn('mt-0.5 h-5 w-5 shrink-0', success ? 'text-emerald-400' : 'text-red-400')} /><div className="min-w-0 flex-1"><p className="font-bold">{success ? 'Success' : 'Error'}</p><p className="mt-0.5 text-sm opacity-90">{toast.message}</p></div><button onClick={close} className="rounded-lg p-1 opacity-70 hover:bg-white/10 hover:opacity-100" aria-label="Close notification"><X className="h-4 w-4" /></button></div>;
 }
 
 function LoginShell({ title }: { title: string }) { return <div className="grid min-h-screen place-items-center bg-gradient-to-br from-[#151b39] via-[#070b15] to-[#06201e] text-slate-100"><Card className="mx-4 w-full max-w-md text-center"><div className="mx-auto mb-6 grid h-14 w-14 place-items-center rounded-2xl bg-indigo-500 shadow-lg shadow-indigo-500/30"><ShieldCheck /></div><h1 className="text-3xl font-black">{title}</h1><p className="mt-2 text-slate-400">Secure dashboard for Discord bot vote webhooks</p></Card></div>; }
@@ -206,7 +221,7 @@ function Empty({ title, desc }: { title: string; desc: string }) { return <div c
 
 function ModalShell({ title, close, children }: any) { return <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 p-0 sm:items-center sm:p-4"><Card className="max-h-[92vh] w-full max-w-2xl overflow-auto rounded-b-none p-4 sm:rounded-3xl sm:p-6"><div className="mb-6 flex items-center justify-between gap-4"><h2 className="text-xl font-black sm:text-2xl">{title}</h2><button className="rounded-xl p-2 hover:bg-slate-800" onClick={close}><X /></button></div>{children}</Card></div>; }
 function AddBotModal({ close, done }: any) { const [form,setForm]=useState({name:'',botId:'',clientId:'',botToken:'',avatarUrl:''}); const [show,setShow]=useState(false); const submit=async()=>{await api('/api/bots',{method:'POST',body:JSON.stringify(form)}); close(); await done();}; return <ModalShell title="Add Bot" close={close}><div className="grid gap-4"><Field label="Bot name"><Input value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="Optional, fetched automatically from Discord" /></Field><Field label="Bot ID / Client ID"><Input value={form.botId} onChange={e=>setForm({...form,botId:e.target.value})} placeholder="Discord bot ID" /></Field><Field label="Bot token" help="The backend validates the token via Discord and stores it encrypted."><div className="flex gap-2"><Input type={show?'text':'password'} value={form.botToken} onChange={e=>setForm({...form,botToken:e.target.value})} /><Button onClick={()=>setShow(!show)}>{show?'Hide':'Show'}</Button></div></Field><Field label="Avatar URL"><Input value={form.avatarUrl} onChange={e=>setForm({...form,avatarUrl:e.target.value})} placeholder="Optional" /></Field><div className="flex justify-end gap-3"><Button onClick={close}>Cancel</Button><Button onClick={submit} className="bg-indigo-500 hover:bg-indigo-400">Validate & Save</Button></div></div></ModalShell>; }
-function AddIntegrationModal({ bots, webhooks, settings, close, done }: any) {
+function AddIntegrationModal({ bots, webhooks, settings, close, done, notify }: any) {
   const [form, setForm] = useState({
     botId: bots[0]?.id || '',
     name: '',
@@ -248,7 +263,7 @@ function AddIntegrationModal({ bots, webhooks, settings, close, done }: any) {
       const created = await api<IntegrationRecord & { slugAdjusted?: boolean }>(`/api/bots/${form.botId}/integrations`, { method: 'POST', body: JSON.stringify(form) });
       close();
       await done();
-      if (created.slugAdjusted) alert(`Integration saved with the available slug: ${created.slug}`);
+      notify(created.slugAdjusted ? `Integration saved with the available slug: ${created.slug}.` : 'Integration saved successfully.');
     } catch (error: any) {
       setFormError(error.message || 'Unable to save this integration.');
     }
@@ -257,16 +272,16 @@ function AddIntegrationModal({ bots, webhooks, settings, close, done }: any) {
   return <ModalShell title="Add Vote Integration" close={close}>
     <div className="grid gap-4">
       <div className="rounded-2xl border border-indigo-500/25 bg-indigo-500/10 p-4 text-sm text-indigo-100">
-        <b>Pour Top.gg :</b> crée le webhook sur Top.gg, copie le secret <code className="rounded bg-slate-950/70 px-1">whs_...</code>, colle-le dans <b>Webhook secret / token</b>, puis mets l'URL finale ci-dessous dans Top.gg.
+        <b>For Top.gg:</b> create the webhook on Top.gg, copy the <code className="rounded bg-slate-950/70 px-1">whs_...</code> secret, paste it into <b>Webhook secret / token</b>, then use the final URL shown below in Top.gg.
       </div>
       {formError && <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-4 text-sm text-red-200">{formError}</div>}
       <Field label="Select bot"><Select value={form.botId} onChange={e => setForm({ ...form, botId: e.target.value })}>{bots.map((b: BotRecord) => <option key={b.id} value={b.id}>{b.name}</option>)}</Select></Field>
-      <Field label="Vote list name" help="Exemples : Top.gg, discord.com, StellarBot, Discord Bot List..."><Input required value={form.name} onChange={e => updateName(e.target.value)} placeholder="Top.gg" /></Field>
-      <Field label="Integration slug" help="Se remplit automatiquement depuis le nom. Tu peux le modifier si besoin."><Input required value={form.slug} onChange={e => { setSlugEdited(true); setForm({ ...form, slug: slugifyClient(e.target.value) }); }} placeholder="topgg" /></Field>
-      <Field label="Webhook secret / token" help="Top.gg v1 : colle le secret whs_. Autres listes : colle le token Authorization. Si vide, VoteHub génère un token legacy."><Input value={form.authorizationToken} onChange={e => setForm({ ...form, authorizationToken: e.target.value })} placeholder="whs_... ou token legacy" /></Field>
+      <Field label="Vote list name" help="Examples: Top.gg, discord.com, StellarBot, Discord Bot List..."><Input required value={form.name} onChange={e => updateName(e.target.value)} placeholder="Top.gg" /></Field>
+      <Field label="Integration slug" help="Automatically generated from the name. You can change it if needed."><Input required value={form.slug} onChange={e => { setSlugEdited(true); setForm({ ...form, slug: slugifyClient(e.target.value) }); }} placeholder="topgg" /></Field>
+      <Field label="Webhook secret / token" help="Top.gg v1: paste the whs_ secret. For other lists, paste the Authorization token. If empty, VoteHub generates a legacy token."><Input value={form.authorizationToken} onChange={e => setForm({ ...form, authorizationToken: e.target.value })} placeholder="whs_... or legacy token" /></Field>
       <Field label="Upvote URL"><Input value={form.upvoteURL} onChange={e => setForm({ ...form, upvoteURL: e.target.value })} placeholder={bot?.botId ? `https://top.gg/bot/${bot.botId}/vote` : 'https://top.gg/bot/BOT_ID/vote'} /></Field>
-      <Field label="Icon URL" help="Obligatoire. Mets l'icône/logo de la bot list pour l'affichage dans Discord et le dashboard."><Input required value={form.iconURL} onChange={e => setForm({ ...form, iconURL: e.target.value })} placeholder="https://exemple.com/icon.png" /></Field>
-      <Field label="Payload user field" help="Optionnel. Top.gg v1 : data.user.platform_id. Legacy souvent : user. VoteHub essaie aussi l'auto-détection."><Input value={form.payloadUserField} onChange={e => setForm({ ...form, payloadUserField: e.target.value })} placeholder="data.user.platform_id ou user" /></Field>
+      <Field label="Icon URL" help="Required. Enter the bot-list icon or logo displayed in Discord and the dashboard."><Input required value={form.iconURL} onChange={e => setForm({ ...form, iconURL: e.target.value })} placeholder="https://example.com/icon.png" /></Field>
+      <Field label="Payload user field" help="Optional. Top.gg v1: data.user.platform_id. Legacy providers often use user. VoteHub also attempts automatic detection."><Input value={form.payloadUserField} onChange={e => setForm({ ...form, payloadUserField: e.target.value })} placeholder="data.user.platform_id or user" /></Field>
       <Field label="Notification webhook" help="All saved webhooks are available. The bot name is shown when a webhook belongs to another bot."><Select value={form.notificationTarget} onChange={e => setForm({ ...form, notificationTarget: e.target.value })}><option value="">Default webhook for {bot?.name || 'the selected bot'}</option>{webhooks.map((w: WebhookRecord) => <option key={w.id} value={w.id}>{w.name}{w.botId !== form.botId ? ` (${w.botName})` : ''}</option>)}</Select></Field>
       <label className="flex items-center gap-2 text-sm font-semibold text-slate-300"><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} />Enabled</label>
       <div className="overflow-hidden rounded-2xl bg-slate-950/60 p-4 text-sm text-slate-300">
@@ -275,7 +290,7 @@ function AddIntegrationModal({ bots, webhooks, settings, close, done }: any) {
           <b className="break-all rounded-xl border border-slate-800 bg-slate-950 px-3 py-2 font-mono text-xs text-indigo-200">{finalUrl}</b>
           <Button onClick={() => copyToClipboard(finalUrl)} className="shrink-0"><Copy className="h-4 w-4" />Copy</Button>
         </div>
-        <p className="mt-2 text-xs text-slate-500">En local avec ngrok, vérifie que PUBLIC_BASE_URL contient bien ton URL ngrok.</p>
+        <p className="mt-2 text-xs text-slate-500">When using ngrok locally, make sure PUBLIC_BASE_URL contains your ngrok URL.</p>
       </div>
       <div className="flex flex-col-reverse gap-3 sm:flex-row sm:justify-end"><Button onClick={close}>Cancel</Button><Button onClick={submit} className="bg-indigo-500 hover:bg-indigo-400">Save Integration</Button></div>
     </div>

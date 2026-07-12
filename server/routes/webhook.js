@@ -397,8 +397,8 @@ async function handleVote(request, reply, mode) {
     : `https://${integration.upvoteURL || ''}`;
 
   const description = isTopggTest || isLegacyTest
-    ? `✅ VoteHub a bien reçu le test webhook pour \`${bot.name}\`.`
-    : `:incoming_envelope: \`${user.username}\` vient de [voter](${upvoteUrl}) pour \`${bot.name}\` !`;
+    ? `✅ VoteHub successfully received the webhook test for \`${bot.name}\`.`
+    : `:incoming_envelope: \`${user.username}\` just [voted](${upvoteUrl}) for \`${bot.name}\`!`;
 
   const fields = [];
   if (isTopggVote) {
