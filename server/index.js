@@ -207,6 +207,17 @@ if (isProduction) {
 app.setErrorHandler((error, request, reply) => {
   request.log.error(error);
 
+  if (error?.code === 11000) {
+    const duplicatedField = Object.keys(error.keyPattern || {})
+      .filter((field) => field !== 'managedBot')
+      .join(', ') || 'value';
+
+    return reply.code(409).send({
+      error: true,
+      message: `This ${duplicatedField} is already in use. Refresh the dashboard and try again.`,
+    });
+  }
+
   reply.code(error.statusCode || 500).send({
     error: true,
     message: isProduction ? 'Internal server error.' : error.message,

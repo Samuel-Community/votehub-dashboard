@@ -60,6 +60,23 @@ function webhookDto(w, bot) {
   };
 }
 
+async function availableIntegrationSlug(managedBot, requestedSlug, excludeId = null) {
+  const base = slugify(requestedSlug) || 'integration';
+  let candidate = base;
+  let suffix = 2;
+
+  while (await models.VoteListIntegration.findOne({
+    managedBot,
+    slug: candidate,
+    ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+  })) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+
+  return candidate;
+}
+
 export async function apiRoutes(app) {
   app.get('/api/health', async () => ({ ok: true, service: 'VoteHub Fastify API', time: new Date().toISOString() }));
 
@@ -157,29 +174,61 @@ export async function apiRoutes(app) {
     }
   });
 
-  app.post('/api/bots/:id/integrations', async (request) => {
+  app.post('/api/bots/:id/integrations', async (request, reply) => {
     const body = request.body || {};
     const bot = await models.ManagedBot.findById(request.params.id);
+    if (!bot) return reply.code(404).send({ error: true, message: 'Bot not found.' });
+
+    if (!String(body.name || '').trim()) {
+      return reply.code(400).send({ error: true, message: 'Vote list name is required.' });
+    }
+
+    let notificationTarget;
+    if (body.notificationTarget) {
+      notificationTarget = await models.NotificationTarget.findById(body.notificationTarget);
+      if (!notificationTarget) {
+        return reply.code(400).send({ error: true, message: 'The selected notification webhook no longer exists.' });
+      }
+    }
+
+    const requestedSlug = slugify(body.slug || body.name);
+    const integrationSlug = await availableIntegrationSlug(request.params.id, requestedSlug);
     const integration = await models.VoteListIntegration.create({
       managedBot: request.params.id,
       name: body.name,
-      slug: slugify(body.slug || body.name),
+      slug: integrationSlug,
       authorizationToken: body.authorizationToken || randomToken(slugify(body.name).slice(0, 8)),
       upvoteURL: body.upvoteURL,
       iconURL: body.iconURL,
       payloadUserField: body.payloadUserField || 'user',
-      notificationTarget: body.notificationTarget || undefined,
+      notificationTarget: notificationTarget?._id,
       enabled: body.enabled !== false,
     });
     await audit(request, 'Integration created', 'integration', integration, null, { name: integration.name });
-    return integrationDto(integration, bot);
+    return reply.code(201).send({
+      ...integrationDto(integration, bot),
+      slugAdjusted: integrationSlug !== requestedSlug,
+    });
   });
 
   app.patch('/api/integrations/:id', async (request, reply) => {
     const body = request.body || {};
-    if (body.name && !body.slug) body.slug = slugify(body.name);
+    const current = await models.VoteListIntegration.findById(request.params.id);
+    if (!current) return reply.code(404).send({ error: true, message: 'Integration not found.' });
+
+    if (body.notificationTarget) {
+      const target = await models.NotificationTarget.findById(body.notificationTarget);
+      if (!target) return reply.code(400).send({ error: true, message: 'The selected notification webhook no longer exists.' });
+    }
+
+    if (body.name || body.slug) {
+      body.slug = await availableIntegrationSlug(
+        current.managedBot,
+        body.slug || body.name,
+        current._id,
+      );
+    }
     const integration = await models.VoteListIntegration.findByIdAndUpdate(request.params.id, body, { returnDocument: 'after' });
-    if (!integration) return reply.code(404).send({ error: true, message: 'Integration not found.' });
     const bot = await models.ManagedBot.findById(integration.managedBot);
     await audit(request, 'Integration updated', 'integration', integration, null, { name: integration.name });
     return integrationDto(integration, bot);
@@ -277,8 +326,12 @@ export async function apiRoutes(app) {
     };
   });
 
-  app.post('/api/bots/:id/notification-targets', async (request) => {
+  app.post('/api/bots/:id/notification-targets', async (request, reply) => {
     const body = request.body || {};
+    const bot = await models.ManagedBot.findById(request.params.id);
+    if (!bot) return reply.code(404).send({ error: true, message: 'Bot not found.' });
+    if (!String(body.name || '').trim()) return reply.code(400).send({ error: true, message: 'Webhook name is required.' });
+    if (!String(body.webhookUrl || '').trim()) return reply.code(400).send({ error: true, message: 'Discord webhook URL is required.' });
     const parsed = parseDiscordWebhookUrl(body.webhookUrl);
     if (body.isDefault) await models.NotificationTarget.find({ managedBot: request.params.id }).then?.(docs => Promise.all(docs.map(d => models.NotificationTarget.findByIdAndUpdate(d._id, { isDefault: false }))));
     const target = await models.NotificationTarget.create({
@@ -291,9 +344,8 @@ export async function apiRoutes(app) {
       isDefault: Boolean(body.isDefault),
       enabled: body.enabled !== false,
     });
-    const bot = await models.ManagedBot.findById(request.params.id);
     await audit(request, 'Webhook created', 'webhook', target, null, { name: target.name });
-    return webhookDto(target, bot);
+    return reply.code(201).send(webhookDto(target, bot));
   });
 
   app.patch('/api/notification-targets/:id', async (request, reply) => {
