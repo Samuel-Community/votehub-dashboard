@@ -216,19 +216,35 @@ export async function apiRoutes(app) {
     const current = await models.VoteListIntegration.findById(request.params.id);
     if (!current) return reply.code(404).send({ error: true, message: 'Integration not found.' });
 
-    if (body.notificationTarget) {
-      const target = await models.NotificationTarget.findById(body.notificationTarget);
+    const update = {};
+    for (const field of ['name', 'slug', 'authorizationToken', 'upvoteURL', 'iconURL', 'payloadUserField', 'enabled']) {
+      if (Object.prototype.hasOwnProperty.call(body, field)) update[field] = body[field];
+    }
+
+    if (Object.prototype.hasOwnProperty.call(body, 'notificationTarget')) {
+      update.notificationTarget = body.notificationTarget || null;
+    }
+
+    if (!String(update.name ?? current.name ?? '').trim()) {
+      return reply.code(400).send({ error: true, message: 'Vote list name is required.' });
+    }
+
+    // An empty token in the edit form means "keep the current secret".
+    if (update.authorizationToken === '') delete update.authorizationToken;
+
+    if (update.notificationTarget) {
+      const target = await models.NotificationTarget.findById(update.notificationTarget);
       if (!target) return reply.code(400).send({ error: true, message: 'The selected notification webhook no longer exists.' });
     }
 
-    if (body.name || body.slug) {
-      body.slug = await availableIntegrationSlug(
+    if (update.name || update.slug) {
+      update.slug = await availableIntegrationSlug(
         current.managedBot,
-        body.slug || body.name,
+        update.slug || update.name,
         current._id,
       );
     }
-    const integration = await models.VoteListIntegration.findByIdAndUpdate(request.params.id, body, { returnDocument: 'after' });
+    const integration = await models.VoteListIntegration.findByIdAndUpdate(request.params.id, update, { returnDocument: 'after', runValidators: true });
     const bot = await models.ManagedBot.findById(integration.managedBot);
     await audit(request, 'Integration updated', 'integration', integration, null, { name: integration.name });
     return integrationDto(integration, bot);
